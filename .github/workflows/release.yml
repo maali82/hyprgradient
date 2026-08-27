@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download binary
+        uses: actions/download-artifact@v5
+        with:
+          name: hyprgradient-linux-x86_64
+          path: target/release
+
+      - name: Make binary executable
+        run: chmod +x target/release/hyprgradient
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build Debian package
+        run: cargo deb --no-build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/debian/*.deb

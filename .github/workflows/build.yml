@@ -1,0 +1,36 @@
+name: Build
+
+on:
+#  push:
+#  branches: [ "main" ]
+  workflow_dispatch:
+
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+          libxkbcommon-dev \
+          libwayland-dev \
+          libegl1-mesa-dev
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyprgradient-linux-x86_64
+          path: target/release/hyprgradient
