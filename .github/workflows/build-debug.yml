@@ -25,10 +25,10 @@ jobs:
           libegl1-mesa-dev
 
       - name: Build
-        run: cargo build
+        run: cargo build --features testing
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: hyprgradient-linux-x86_64-debug
+          name: hyprgradient-debug
           path: target/debug

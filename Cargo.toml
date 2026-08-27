@@ -5,6 +5,9 @@ edition = "2021"
 homepage = "https://github.com/maali82/hyprgradient"
 repository = "https://github.com/maali82/hyprgradient"
 
+[features]
+testing = []
+
 [dependencies]
 wayland-client = "0"
 wayland-egl = "0"

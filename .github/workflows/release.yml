@@ -22,7 +22,7 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v5
         with:
-          name: hyprgradient-linux-x86_64
+          name: hyprgradient
           path: target/release
 
       - name: Make binary executable
@@ -31,6 +31,7 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
+      # we already built it via the build workflow, cargo deb only has to package it as deb
       - name: Build Debian package
         run: cargo deb --no-build
 
