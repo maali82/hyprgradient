@@ -11,6 +11,8 @@ I really like gradient backgrounds. On my Windows 10 desktop PC I have a collect
 
 ## What is this?
 
+![hyprgradient screenshot](.github/screenshot.png)
+
 hyprgradient is a small **Wayland** wallpaper generator that renders gradients using a GPU shader rather than generating the image on the CPU. It is primarily intended for use alongside **Hyprland**, although the project itself is really about generating wallpapers rather than being deeply tied to Hyprland as long as Wayland is used as the compositor. 
 
 This is a small hobby project, might add things, might not.
