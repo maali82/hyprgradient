@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use rand::seq::SliceRandom;
 
 #[derive(Debug, Deserialize, Clone, Copy)]
 pub struct Stop {
@@ -123,6 +124,11 @@ impl Config {
         if pool.is_empty() {
             bail!("no gradient in the config has `active = true`");
         }
+
+        if self.settings.random {
+            pool.shuffle(&mut rand::rng());
+        }
+
         for gradient in &mut pool {
             gradient.stops.sort_by_key(|stop| stop.position);
         }
