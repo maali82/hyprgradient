@@ -66,7 +66,7 @@ The idea is that the config stays human-readable and easy to mess with. So I thi
 
 ## Why?
 
-Because I like gradients. :) And, honestly, this started as an evening experiment messing around with Rust, Wayland, OpenGL and a a few hours of vibe doodling later (particularly for the Wayland bit), there was a thing.
+Because I like gradients. :) And, honestly, this started as an evening experiment messing around with Rust, Wayland, OpenGL and a a few hours of AI-assisted doodling later (particularly for the Wayland bit), there was a thing.
 
 ## License
 
