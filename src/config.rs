@@ -1,6 +1,6 @@
 use crate::bail;
 use crate::file_ops::FileOps;
-use rand::{seq::SliceRandom, Rng};
+use rand::{seq::SliceRandom, RngExt};
 use serde::Deserialize;
 use std::time::Duration;
 
