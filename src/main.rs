@@ -5,7 +5,7 @@ mod log;
 mod render;
 mod wallpaper;
 
-use smithay_client_toolkit::reexports::calloop::EventLoop;
+use smithay_client_toolkit::reexports::calloop::{ping::make_ping, EventLoop};
 use std::{
     sync::mpsc,
     thread,
@@ -37,6 +37,14 @@ fn run() {
 
     set_current_gradient(&mut wallpaper, &gradients, current_index);
 
+    let (ping, ping_source) = match make_ping() {
+        Ok(pair) => pair,
+        Err(error) => bail!("creating ping source: {error}"),
+    };
+    if let Err(error) = event_loop.handle().insert_source(ping_source, |_, _, _| {}) {
+        bail!("inserting ping source: {error}");
+    }
+
     let (event_tx, event_rx) = mpsc::channel::<String>();
 
     thread::spawn(move || {
@@ -49,6 +57,7 @@ fn run() {
             if event_tx.send(event).is_err() {
                 break;
             }
+            ping.ping();
         }
     });
 

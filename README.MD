@@ -5,9 +5,10 @@
 I really like gradient backgrounds. On my Windows 10 desktop PC I have a collection of PNGs that I just cycle through. I recently finally gave up on Windows 11 on my laptop and installed debian-gnome with hyprland as main environment for doing productivity things. So instead of relying on a bunch of images, I decided to write something something simple:
 
 1) a generated wallpaper,
-2) using a simple OpenGL shader,
-3) using (multiple) scripted gradients,
-4) in a simple config file.
+2) for hyprland/wayland,
+3) using a simple OpenGL shader,
+4) using (multiple) scripted gradients,
+5) in a simple config file.
 
 ## What is this?
 
@@ -19,10 +20,7 @@ This is a small hobby project, might add things, might not.
 
 ## Configuration
 
-By default, the config file is located at: 
-```
-~/.config/hypr/hyprgradient.conf
-```
+By default, the config file is located at: `~/.config/hypr/hyprgradient.conf`
 
 The config describes the gradients to generate, including things like colors (R,G,B), gradient type (LINEAR only for now), direction (360 degrees) and stops (max 32). Multiple gradients can be defined, so you can keep a small collection of backgrounds in a single config file. You can also turn gradients on and off by setting the active bool.
 
@@ -64,15 +62,24 @@ direction = 0
 
 The idea is that the config stays human-readable and easy to mess with. So I think it's pretty self explanatory too. Change a few gradients and colors in the .conf file, restart hyprgradient, and you have different wallpapers.
 
+## Use
+
+- Tweak ~/.config/hypr/hyprgradient.conf to your needs.
+- Autostart hyprgradient with Hyprland exec-once or add it as a service.
+- I added some cli commands like `hyprgradient next`:
+  - next : skips to the next gradient in the list.
+  - halt : stops the gradient cycling, so you keep this one.
+  - reload : reloads everything, convenient if you edited the .conf file for example.
+
 ## Why?
 
 Because I like gradients. :) And, honestly, this started as an evening experiment messing around with Rust, Wayland, OpenGL and a a few hours of AI-assisted doodling later (particularly for the Wayland bit), there was a thing.
 
 ## Changelog
 
-1.0.0 - Main functionality there.
-1.0.1 - Made it more like a controllable service by adding some command line features. 
-1.0.2 - Refactored a lot, decided not to go with clap but "keep it simple, stupid". In the same vein I didn't want to implement a whole IPC to trigger events in a running service so using a filewatcher with inotify instead.
+- 0.1.0 Main functionality there.
+- 0.1.1 Made it more like a controllable service by adding some command line features. Started to overengineer it with clap and an event system. Meh, so dropped this version.
+- 0.1.2 Refactored a lot, decided not to go with clap but "keep it simple, stupid". In the same vein I didn't want to implement a whole IPC to trigger events in a running service so using a filewatcher with inotify instead.
 
 ## License
 
