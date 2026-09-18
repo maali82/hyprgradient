@@ -78,7 +78,7 @@ Because I like gradients. :) And, honestly, this started as an evening experimen
 ## Changelog
 
 - 0.1.0 Main functionality there.
-- 0.1.1 Made it more like a controllable service by adding some command line features. Started to overengineer it with clap and an event system. Meh, so dropped this version.
+- 0.1.1 First .deb release build.
 - 0.1.2 Refactored a lot, decided not to go with clap but "keep it simple, stupid". In the same vein I didn't want to implement a whole IPC to trigger events in a running service so using a filewatcher with inotify instead.
 
 ## License
