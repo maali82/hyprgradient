@@ -4,10 +4,10 @@
 //! parameters (stops, type and direction). A square texture/FBO is generated
 //! once per gradient and can then be displayed on any Wayland output.
 
-use anyhow::{anyhow, Context, Result};
 use khronos_egl as egl;
 use std::ffi::{c_void, CString};
 
+use crate::bail;
 use crate::config::{GradientProfile, GradientType};
 
 const PLANE_VS: &str = include_str!("shaders/plane_vs.glsl");
@@ -39,19 +39,26 @@ pub struct GlRenderer {
 }
 
 impl GlRenderer {
-    pub fn new(native_display: *mut c_void, gradient_resolution: u32) -> Result<Self> {
+    pub fn new(native_display: *mut c_void, gradient_resolution: u32) -> Self {
         if gradient_resolution == 0 {
-            return Err(anyhow!("gradient texture resolution must be greater than zero"));
+            bail!("gradient texture resolution must be greater than zero");
         }
 
-        let lib = unsafe { libloading::Library::new("libEGL.so.1") }
-            .context("unable to find libEGL.so.1 - is a Mesa/EGL driver installed?")?;
-        let egl = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required_from(lib) }
-            .map_err(|e| anyhow!("failed to load EGL 1.4+ from libEGL.so.1: {e:?}"))?;
+        let lib = match unsafe { libloading::Library::new("libEGL.so.1") } {
+            Ok(lib) => lib,
+            Err(error) => bail!("unable to find libEGL.so.1 - is a Mesa/EGL driver installed?: {error}"),
+        };
+        let egl = match unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required_from(lib) } {
+            Ok(egl) => egl,
+            Err(error) => bail!("failed to load EGL 1.4+ from libEGL.so.1: {error:?}"),
+        };
 
-        let display = unsafe { egl.get_display(native_display) }
-            .ok_or_else(|| anyhow!("eglGetDisplay failed"))?;
-        egl.initialize(display).context("eglInitialize failed")?;
+        let Some(display) = (unsafe { egl.get_display(native_display) }) else {
+            bail!("eglGetDisplay failed");
+        };
+        if let Err(error) = egl.initialize(display) {
+            bail!("eglInitialize failed: {error}");
+        }
 
         let attributes = [
             egl::RED_SIZE, 8,
@@ -62,16 +69,22 @@ impl GlRenderer {
             egl::RENDERABLE_TYPE, egl::OPENGL_ES2_BIT,
             egl::NONE,
         ];
-        let config = egl.choose_first_config(display, &attributes)
-            .context("eglChooseConfig failed")?
-            .ok_or_else(|| anyhow!("no suitable EGL config found"))?;
+        let config = match egl.choose_first_config(display, &attributes) {
+            Ok(Some(config)) => config,
+            Ok(None) => bail!("no suitable EGL config found"),
+            Err(error) => bail!("eglChooseConfig failed: {error}"),
+        };
 
-        egl.bind_api(egl::OPENGL_ES_API).context("eglBindAPI(ES) failed")?;
+        if let Err(error) = egl.bind_api(egl::OPENGL_ES_API) {
+            bail!("eglBindAPI(ES) failed: {error}");
+        }
         let context_attributes = [egl::CONTEXT_CLIENT_VERSION, 2, egl::NONE];
-        let context = egl.create_context(display, config, None, &context_attributes)
-            .context("eglCreateContext failed")?;
+        let context = match egl.create_context(display, config, None, &context_attributes) {
+            Ok(context) => context,
+            Err(error) => bail!("eglCreateContext failed: {error}"),
+        };
 
-        Ok(Self {
+        Self {
             egl,
             display,
             config,
@@ -88,19 +101,20 @@ impl GlRenderer {
             stop_positions: -1,
             stop_colors: -1,
             display_texture: -1,
-        })
+        }
     }
 
-    pub fn create_window_surface(&self, native_window: *mut c_void) -> Result<egl::Surface> {
-        unsafe {
-            self.egl
-                .create_window_surface(
-                    self.display,
-                    self.config,
-                    native_window as egl::NativeWindowType,
-                    None,
-                )
-                .context("eglCreateWindowSurface failed")
+    pub fn create_window_surface(&self, native_window: *mut c_void) -> egl::Surface {
+        match unsafe {
+            self.egl.create_window_surface(
+                self.display,
+                self.config,
+                native_window as egl::NativeWindowType,
+                None,
+            )
+        } {
+            Ok(surface) => surface,
+            Err(error) => bail!("eglCreateWindowSurface failed: {error}"),
         }
     }
 
@@ -108,16 +122,19 @@ impl GlRenderer {
         let _ = self.egl.destroy_surface(self.display, surface);
     }
 
-    pub fn make_current(&self, surface: egl::Surface) -> Result<()> {
-        self.egl
-            .make_current(self.display, Some(surface), Some(surface), Some(self.context))
-            .context("eglMakeCurrent failed")
+    pub fn make_current(&self, surface: egl::Surface) {
+        if let Err(error) =
+            self.egl
+                .make_current(self.display, Some(surface), Some(surface), Some(self.context))
+        {
+            bail!("eglMakeCurrent failed: {error}");
+        }
     }
 
     /// Must be called while an EGL surface belonging to this context is current.
-    pub fn initialize_gl(&mut self) -> Result<()> {
+    pub fn initialize_gl(&mut self) {
         if self.gradient_program != 0 {
-            return Ok(());
+            return;
         }
 
         gl::load_with(|name| {
@@ -128,8 +145,8 @@ impl GlRenderer {
         });
 
         unsafe {
-            self.gradient_program = compile_program(PLANE_VS, GRADIENT_FS)?;
-            self.display_program = compile_program(PLANE_VS, DISPLAY_FS)?;
+            self.gradient_program = compile_program(PLANE_VS, GRADIENT_FS);
+            self.display_program = compile_program(PLANE_VS, DISPLAY_FS);
 
             self.gradient_type = uniform(self.gradient_program, "u_gradient_type");
             self.direction = uniform(self.gradient_program, "u_direction");
@@ -138,25 +155,25 @@ impl GlRenderer {
             self.stop_colors = uniform(self.gradient_program, "u_stop_colors");
             self.display_texture = uniform(self.display_program, "u_texture");
 
-            self.gradient_texture = create_texture(self.gradient_resolution)?;
-            self.gradient_fbo = create_fbo(self.gradient_texture)?;
+            self.gradient_texture = create_texture(self.gradient_resolution);
+            self.gradient_fbo = create_fbo(self.gradient_texture);
             self.fullscreen_vbo = create_fullscreen_vbo();
         }
-
-        Ok(())
     }
 
     /// Render the configured gradient into the GPU-resident square texture.
     /// No gradient pixels are generated on the CPU.
-    pub fn render_gradient(&mut self, gradient: &GradientProfile) -> Result<()> {
+    pub fn render_gradient(&mut self, gradient: &GradientProfile) {
         if self.gradient_program == 0 {
-            return Err(anyhow!("OpenGL renderer has not been initialized"));
+            bail!("OpenGL renderer has not been initialized");
         }
         if gradient.stops.len() > MAX_STOPS {
-            return Err(anyhow!(
+            bail!(
                 "gradient `{}` has {} stops; maximum supported is {}",
-                gradient.name, gradient.stops.len(), MAX_STOPS
-            ));
+                gradient.name,
+                gradient.stops.len(),
+                MAX_STOPS
+            );
         }
 
         let mut positions = [0.0f32; MAX_STOPS];
@@ -199,17 +216,15 @@ impl GlRenderer {
             gl::UseProgram(0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
-
-        Ok(())
     }
 
     /// Display the generated gradient texture on a Wayland/EGL surface.
-    pub fn draw(&self, surface: egl::Surface, width: u32, height: u32) -> Result<()> {
+    pub fn draw(&self, surface: egl::Surface, width: u32, height: u32) {
         if width == 0 || height == 0 {
-            return Ok(());
+            return;
         }
 
-        self.make_current(surface)?;
+        self.make_current(surface);
 
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -229,7 +244,9 @@ impl GlRenderer {
             gl::UseProgram(0);
         }
 
-        self.egl.swap_buffers(self.display, surface).context("eglSwapBuffers failed")
+        if let Err(error) = self.egl.swap_buffers(self.display, surface) {
+            bail!("eglSwapBuffers failed: {error}");
+        }
     }
 }
 
@@ -240,10 +257,12 @@ impl Drop for GlRenderer {
     }
 }
 
-unsafe fn create_texture(resolution: u32) -> Result<gl::types::GLuint> {
+unsafe fn create_texture(resolution: u32) -> gl::types::GLuint {
     let mut texture = 0;
     gl::GenTextures(1, &mut texture);
-    if texture == 0 { return Err(anyhow!("glGenTextures returned zero")); }
+    if texture == 0 {
+        bail!("glGenTextures returned zero");
+    }
     gl::BindTexture(gl::TEXTURE_2D, texture);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
@@ -255,10 +274,10 @@ unsafe fn create_texture(resolution: u32) -> Result<gl::types::GLuint> {
         gl::RGBA, gl::UNSIGNED_BYTE, std::ptr::null(),
     );
     gl::BindTexture(gl::TEXTURE_2D, 0);
-    Ok(texture)
+    texture
 }
 
-unsafe fn create_fbo(texture: gl::types::GLuint) -> Result<gl::types::GLuint> {
+unsafe fn create_fbo(texture: gl::types::GLuint) -> gl::types::GLuint {
     let mut fbo = 0;
     gl::GenFramebuffers(1, &mut fbo);
     gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
@@ -269,9 +288,9 @@ unsafe fn create_fbo(texture: gl::types::GLuint) -> Result<gl::types::GLuint> {
     let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
     gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     if status != gl::FRAMEBUFFER_COMPLETE {
-        return Err(anyhow!("gradient framebuffer is incomplete: 0x{status:04x}"));
+        bail!("gradient framebuffer is incomplete: 0x{status:04x}");
     }
-    Ok(fbo)
+    fbo
 }
 
 unsafe fn create_fullscreen_vbo() -> gl::types::GLuint {
@@ -294,12 +313,9 @@ unsafe fn uniform(program: gl::types::GLuint, name: &str) -> gl::types::GLint {
     gl::GetUniformLocation(program, name.as_ptr())
 }
 
-unsafe fn compile_program(vertex_src: &str, fragment_src: &str) -> Result<gl::types::GLuint> {
-    let vs = compile_shader(gl::VERTEX_SHADER, vertex_src)?;
-    let fs = match compile_shader(gl::FRAGMENT_SHADER, fragment_src) {
-        Ok(s) => s,
-        Err(e) => { gl::DeleteShader(vs); return Err(e); }
-    };
+unsafe fn compile_program(vertex_src: &str, fragment_src: &str) -> gl::types::GLuint {
+    let vs = compile_shader(gl::VERTEX_SHADER, vertex_src);
+    let fs = compile_shader(gl::FRAGMENT_SHADER, fragment_src);
     let program = gl::CreateProgram();
     gl::AttachShader(program, vs);
     gl::AttachShader(program, fs);
@@ -313,14 +329,17 @@ unsafe fn compile_program(vertex_src: &str, fragment_src: &str) -> Result<gl::ty
     if status != gl::TRUE as i32 {
         let log = program_log(program);
         gl::DeleteProgram(program);
-        return Err(anyhow!("shader program link failed: {log}"));
+        bail!("shader program link failed: {log}");
     }
-    Ok(program)
+    program
 }
 
-unsafe fn compile_shader(kind: gl::types::GLenum, source: &str) -> Result<gl::types::GLuint> {
+unsafe fn compile_shader(kind: gl::types::GLenum, source: &str) -> gl::types::GLuint {
     let shader = gl::CreateShader(kind);
-    let source = CString::new(source).context("shader source contains NUL")?;
+    let source = match CString::new(source) {
+        Ok(source) => source,
+        Err(error) => bail!("shader source contains NUL: {error}"),
+    };
     gl::ShaderSource(shader, 1, &source.as_ptr(), std::ptr::null());
     gl::CompileShader(shader);
     let mut status = 0;
@@ -328,15 +347,17 @@ unsafe fn compile_shader(kind: gl::types::GLenum, source: &str) -> Result<gl::ty
     if status != gl::TRUE as i32 {
         let log = shader_log(shader);
         gl::DeleteShader(shader);
-        return Err(anyhow!("shader compile failed: {log}"));
+        bail!("shader compile failed: {log}");
     }
-    Ok(shader)
+    shader
 }
 
 unsafe fn shader_log(shader: gl::types::GLuint) -> String {
     let mut len = 0;
     gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
-    if len <= 0 { return String::new(); }
+    if len <= 0 {
+        return String::new();
+    }
     let mut buf = vec![0u8; len as usize];
     gl::GetShaderInfoLog(shader, len, std::ptr::null_mut(), buf.as_mut_ptr() as *mut i8);
     String::from_utf8_lossy(&buf).trim_end_matches('\0').to_string()
@@ -345,7 +366,9 @@ unsafe fn shader_log(shader: gl::types::GLuint) -> String {
 unsafe fn program_log(program: gl::types::GLuint) -> String {
     let mut len = 0;
     gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut len);
-    if len <= 0 { return String::new(); }
+    if len <= 0 {
+        return String::new();
+    }
     let mut buf = vec![0u8; len as usize];
     gl::GetProgramInfoLog(program, len, std::ptr::null_mut(), buf.as_mut_ptr() as *mut i8);
     String::from_utf8_lossy(&buf).trim_end_matches('\0').to_string()

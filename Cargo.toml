@@ -1,6 +1,6 @@
 [package]
 name = "hyprgradient"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 homepage = "https://github.com/maali82/hyprgradient"
 repository = "https://github.com/maali82/hyprgradient"
@@ -9,17 +9,19 @@ repository = "https://github.com/maali82/hyprgradient"
 testing = []
 
 [dependencies]
+rand = "0"
+
 wayland-client = "0"
 wayland-egl = "0"
 smithay-client-toolkit = { version = "0", features = ["calloop"] }
 khronos-egl = { version = "6", features = ["dynamic"] }
 libloading = "0.8"
 gl = "0"
+
 serde = { version = "1", features = ["derive"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }
-anyhow = "1"
-env_logger = "0"
-log = "0"
+
+inotify = "0"
 
 [profile.release]
 opt-level = "z"

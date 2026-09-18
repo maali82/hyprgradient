@@ -4,19 +4,20 @@
 //! Wayland output. Rendering itself is delegated to GlRenderer.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
-use anyhow::{anyhow, Result};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_dispatch2, delegate_registry,
     output::{OutputHandler, OutputState},
-    reexports::calloop::{timer::{TimeoutAction, Timer}, EventLoop},
+    reexports::calloop::EventLoop,
     reexports::calloop_wayland_source::WaylandSource,
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     shell::{
-        wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure},
+        wlr_layer::{
+            Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+            LayerSurfaceConfigure,
+        },
         WaylandSurface,
     },
 };
@@ -27,7 +28,9 @@ use wayland_client::{
 };
 use wayland_egl::WlEglSurface;
 
+use crate::bail;
 use crate::config::GradientProfile;
+use crate::log;
 use crate::render::GlRenderer;
 
 struct OutputSurface {
@@ -46,111 +49,94 @@ pub struct WaylandWallpaper {
     layer_shell: LayerShell,
     renderer: GlRenderer,
     outputs: HashMap<wayland_client::backend::ObjectId, OutputSurface>,
-    gradients: Vec<GradientProfile>,
-    current_index: usize,
+    current_gradient: Option<GradientProfile>,
     texture_ready: bool,
-    cycle_interval: Duration,
-    exit: bool,
 }
 
 impl WaylandWallpaper {
-    pub fn new(
-        gradients: Vec<GradientProfile>,
-        cycle_interval: Duration,
-        texture_resolution: u32,
-    ) -> Result<(Self, wayland_client::EventQueue<Self>)> {
-        let conn = Connection::connect_to_env()?;
-        let (globals, event_queue) = registry_queue_init::<Self>(&conn)?;
+    pub fn new(texture_resolution: u32) -> (Self, wayland_client::EventQueue<Self>) {
+        let conn = match Connection::connect_to_env() {
+            Ok(conn) => conn,
+            Err(error) => bail!("connecting to Wayland: {error}"),
+        };
+        let (globals, event_queue) = match registry_queue_init::<Self>(&conn) {
+            Ok(result) => result,
+            Err(error) => bail!("initializing Wayland registry: {error}"),
+        };
         let qh = event_queue.handle();
 
         let registry_state = RegistryState::new(&globals);
-        let compositor = CompositorState::bind(&globals, &qh)
-            .map_err(|e| anyhow!("wl_compositor: {e}"))?;
-        let layer_shell = LayerShell::bind(&globals, &qh)
-            .map_err(|e| anyhow!("compositor has no wlr-layer-shell: {e}"))?;
+        let compositor = match CompositorState::bind(&globals, &qh) {
+            Ok(compositor) => compositor,
+            Err(error) => bail!("wl_compositor: {error}"),
+        };
+        let layer_shell = match LayerShell::bind(&globals, &qh) {
+            Ok(layer_shell) => layer_shell,
+            Err(error) => bail!("compositor has no wlr-layer-shell: {error}"),
+        };
         let output_state = OutputState::new(&globals, &qh);
 
         let native_display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-        let renderer = GlRenderer::new(native_display, texture_resolution)?;
+        let renderer = GlRenderer::new(native_display, texture_resolution);
 
-        Ok((Self {
-            conn,
-            registry_state,
-            output_state,
-            compositor,
-            layer_shell,
-            renderer,
-            outputs: HashMap::new(),
-            gradients,
-            current_index: 0,
-            texture_ready: false,
-            cycle_interval,
-            exit: false,
-        }, event_queue))
+        (
+            Self {
+                conn,
+                registry_state,
+                output_state,
+                compositor,
+                layer_shell,
+                renderer,
+                outputs: HashMap::new(),
+                current_gradient: None,
+                texture_ready: false,
+            },
+            event_queue,
+        )
     }
 
-    pub fn run(mut self, event_queue: wayland_client::EventQueue<Self>) -> Result<()> {
-        let mut event_loop: EventLoop<Self> = EventLoop::try_new()?;
-        let loop_handle = event_loop.handle();
+    pub fn insert_wayland_source(
+        &self,
+        event_loop: &EventLoop<Self>,
+        event_queue: wayland_client::EventQueue<Self>,
+    ) {
+        if let Err(error) = WaylandSource::new(self.conn.clone(), event_queue).insert(event_loop.handle()) {
+            bail!("failed to insert Wayland event source: {error}");
+        }
+    }
 
-        WaylandSource::new(self.conn.clone(), event_queue)
-            .insert(loop_handle.clone())
-            .map_err(|e| anyhow!("failed to insert Wayland event source: {e}"))?;
+    pub fn set_gradient(&mut self, gradient: GradientProfile) {
+        log!("setting gradient '{}'", gradient.name);
+        self.current_gradient = Some(gradient.clone());
 
-        if self.gradients.len() > 1 {
-            let interval = self.cycle_interval;
-            loop_handle
-                .insert_source(
-                    Timer::from_duration(interval),
-                    move |_deadline, _, app: &mut Self| {
-                        if let Err(e) = app.next_gradient() {
-                            log::error!("failed to render gradient: {e}");
-                            app.exit = true;
-                        }
-
-                        TimeoutAction::ToDuration(interval)
-                    },
-                )
-                .map_err(|e| anyhow!("failed to insert gradient timer: {e:?}"))?;
+        if self.outputs.is_empty() {
+            return;
         }
 
-        while !self.exit {
-            event_loop.dispatch(None, &mut self)?;
-        }
-        Ok(())
+        self.render_all(&gradient);
     }
 
-    fn next_gradient(&mut self) -> Result<()> {
-        self.current_index = (self.current_index + 1) % self.gradients.len();
-        let gradient = self.gradients[self.current_index].clone();
-        log::debug!("cycling to gradient '{}'", gradient.name);
-        self.render_all(&gradient)
-    }
-
-    fn render_all(&mut self, gradient: &GradientProfile) -> Result<()> {
+    fn render_all(&mut self, gradient: &GradientProfile) {
         let first_surface = self.outputs.values().next().map(|o| o.egl_surface);
-        let Some(surface) = first_surface else { return Ok(()); };
+        let Some(surface) = first_surface else {
+            return;
+        };
 
-        self.renderer.make_current(surface)?;
-        self.renderer.initialize_gl()?;
-        self.renderer.render_gradient(gradient)?;
+        self.renderer.make_current(surface);
+        self.renderer.initialize_gl();
+        self.renderer.render_gradient(gradient);
         self.texture_ready = true;
 
         for output in self.outputs.values() {
             if output.width != 0 && output.height != 0 {
-                self.renderer.draw(output.egl_surface, output.width, output.height)?;
+                self.renderer.draw(output.egl_surface, output.width, output.height);
             }
         }
-        Ok(())
     }
 
-    fn create_output_surface(
-        &mut self,
-        qh: &QueueHandle<Self>,
-        output: &wl_output::WlOutput,
-    ) -> Result<()> {
+    fn create_output_surface(&mut self, qh: &QueueHandle<Self>, output: &wl_output::WlOutput) {
         if self.outputs.contains_key(&output.id()) {
-            return Ok(());
+            return;
         }
 
         let surface = self.compositor.create_surface(qh);
@@ -168,18 +154,24 @@ impl WaylandWallpaper {
         layer.set_size(0, 0);
         layer.commit();
 
-        let egl_window = WlEglSurface::new(layer.wl_surface().id(), 1, 1)
-            .map_err(|e| anyhow!("failed to create wl_egl_window: {e:?}"))?;
-        let egl_surface = self.renderer.create_window_surface(egl_window.ptr() as *mut std::ffi::c_void)?;
+        let egl_window = match WlEglSurface::new(layer.wl_surface().id(), 1, 1) {
+            Ok(egl_window) => egl_window,
+            Err(error) => bail!("failed to create wl_egl_window: {error:?}"),
+        };
+        let egl_surface = self
+            .renderer
+            .create_window_surface(egl_window.ptr() as *mut std::ffi::c_void);
 
-        self.outputs.insert(output.id(), OutputSurface {
-            layer,
-            egl_window,
-            egl_surface,
-            width: 0,
-            height: 0,
-        });
-        Ok(())
+        self.outputs.insert(
+            output.id(),
+            OutputSurface {
+                layer,
+                egl_window,
+                egl_surface,
+                width: 0,
+                height: 0,
+            },
+        );
     }
 }
 
@@ -192,13 +184,12 @@ impl CompositorHandler for WaylandWallpaper {
 }
 
 impl OutputHandler for WaylandWallpaper {
-    fn output_state(&mut self) -> &mut OutputState { &mut self.output_state }
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.output_state
+    }
 
     fn new_output(&mut self, _: &Connection, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
-        if let Err(e) = self.create_output_surface(qh, &output) {
-            log::error!("failed to create wallpaper for output {:?}: {e:#}", output.id());
-            self.exit = true;
-        }
+        self.create_output_surface(qh, &output);
     }
 
     fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
@@ -207,24 +198,20 @@ impl OutputHandler for WaylandWallpaper {
         if let Some(surface) = self.outputs.remove(&output.id()) {
             self.renderer.destroy_surface(surface.egl_surface);
         }
-        if self.outputs.is_empty() {
-            self.exit = true;
-        }
     }
 }
 
 impl LayerShellHandler for WaylandWallpaper {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if let Some(id) = self.outputs.iter()
+        if let Some(id) = self
+            .outputs
+            .iter()
             .find(|(_, output)| output.layer.wl_surface() == layer.wl_surface())
             .map(|(id, _)| id.clone())
         {
             if let Some(output) = self.outputs.remove(&id) {
                 self.renderer.destroy_surface(output.egl_surface);
             }
-        }
-        if self.outputs.is_empty() {
-            self.exit = true;
         }
     }
 
@@ -237,7 +224,11 @@ impl LayerShellHandler for WaylandWallpaper {
         _: u32,
     ) {
         let layer_id = layer.wl_surface().id();
-        let Some(output) = self.outputs.values_mut().find(|output| output.layer.wl_surface().id() == layer_id) else {
+        let Some(output) = self
+            .outputs
+            .values_mut()
+            .find(|output| output.layer.wl_surface().id() == layer_id)
+        else {
             return;
         };
 
@@ -247,22 +238,21 @@ impl LayerShellHandler for WaylandWallpaper {
         let width = output.width;
         let height = output.height;
 
-        if width == 0 || height == 0 { return; }
+        if width == 0 || height == 0 {
+            return;
+        }
 
         let egl_surface = output.egl_surface;
 
         // The first configure is when EGL rendering is safe. Subsequent
         // configures redraw the current texture at the new output size.
-        let result = if !self.texture_ready {
-            let gradient = self.gradients[self.current_index].clone();
-            self.render_all(&gradient)
+        if !self.texture_ready {
+            let Some(gradient) = self.current_gradient.clone() else {
+                return;
+            };
+            self.render_all(&gradient);
         } else {
-            self.renderer.draw(egl_surface, width, height)
-        };
-
-        if let Err(e) = result {
-            log::error!("failed to render wallpaper: {e:#}");
-            self.exit = true;
+            self.renderer.draw(egl_surface, width, height);
         }
     }
 }
@@ -271,6 +261,8 @@ delegate_registry!(WaylandWallpaper);
 delegate_dispatch2!(WaylandWallpaper);
 
 impl ProvidesRegistryState for WaylandWallpaper {
-    fn registry(&mut self) -> &mut RegistryState { &mut self.registry_state }
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry_state
+    }
     registry_handlers![OutputState];
 }

@@ -66,7 +66,13 @@ The idea is that the config stays human-readable and easy to mess with. So I thi
 
 ## Why?
 
-Because I like gradients. :) And, honestly, this started as an evening experiment messing around with Rust, Wayland, OpenGL and a a few hours of vibe doodling later (particularly for the Wayland bit), there was a thing.
+Because I like gradients. :) And, honestly, this started as an evening experiment messing around with Rust, Wayland, OpenGL and a a few hours of AI-assisted doodling later (particularly for the Wayland bit), there was a thing.
+
+## Changelog
+
+1.0.0 - Main functionality there.
+1.0.1 - Made it more like a controllable service by adding some command line features. 
+1.0.2 - Refactored a lot, decided not to go with clap but "keep it simple, stupid". In the same vein I didn't want to implement a whole IPC to trigger events in a running service so using a filewatcher with inotify instead.
 
 ## License
 
