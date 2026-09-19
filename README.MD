@@ -68,7 +68,7 @@ The idea is that the config stays human-readable and easy to mess with. So I thi
 - Autostart hyprgradient with Hyprland exec-once or add it as a service.
 - I added some cli commands like `hyprgradient next`:
   - next : skips to the next gradient in the list.
-  - halt : stops the gradient cycling, so you keep this one.
+  - freeze : stops the gradient cycling, so you keep this one.
   - reload : reloads everything, convenient if you edited the .conf file for example.
 
 ## Why?

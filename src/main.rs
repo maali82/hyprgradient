@@ -64,9 +64,7 @@ fn run() {
     let mut interval = config.cycle_interval();
     let mut next_tick = Instant::now() + interval;
 
-    let mut running = true;
-
-    while running {
+    loop {
         let timeout = next_tick.saturating_duration_since(Instant::now());
         if let Err(error) = event_loop.dispatch(Some(timeout), &mut wallpaper) {
             bail!("dispatching wayland events: {error}");
@@ -81,7 +79,7 @@ fn run() {
                     &mut next_tick,
                     interval,
                 ),
-                "halt" => halt_event(&mut running),
+                "freeze" => freeze_event(&mut interval, &mut next_tick),
                 "reload" => reload_event(
                     &mut wallpaper,
                     &mut config,
@@ -101,9 +99,11 @@ fn run() {
     }
 }
 
-fn halt_event(running: &mut bool) {
-    log!("received halt event");
-    *running = false;
+fn freeze_event(interval: &mut Duration, next_tick: &mut Instant) {
+    log!("received freeze event");
+    // 100 years should be enough for everyone!!!
+    *interval = Duration::from_secs(60 * 60 * 24 * 365 * 100);
+    *next_tick = Instant::now() + *interval;
 }
 
 fn next_event(
@@ -168,7 +168,7 @@ fn send_event(word: &str) {
 
 fn main() {
     match std::env::args().nth(1).as_deref() {
-        Some("halt") => send_event("halt"),
+        Some("freeze") => send_event("freeze"),
         Some("next") => send_event("next"),
         Some("reload") => send_event("reload"),
         Some(other) => bail!("unknown command: {other}"),
